@@ -1,0 +1,48 @@
+import { beforeEach, afterEach, it, expect, vi } from 'vitest';
+import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/svelte';
+import { EditorView } from '@codemirror/view';
+import App from '../src/App.svelte';
+import { renderMarkdown } from '../src/markdown';
+import { loadNotes } from '../src/storage';
+beforeEach(() => { localStorage.clear(); });
+afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+it('creates, edits, saves, searches, and restores a local note', async () => {
+  const result = render(App);
+  await screen.findByDisplayValue('A place for your thoughts');
+  await fireEvent.click(screen.getByRole('button', { name: /New note/ }));
+  await fireEvent.input(screen.getByRole('textbox', { name: 'Note title' }), { target: { value: 'Persistence test' } });
+  await fireEvent.click(screen.getByRole('button', { name: 'Markdown' }));
+  const content = await waitFor(() => { const node = result.container.querySelector('.cm-content'); expect(node).toBeTruthy(); return node as HTMLElement; });
+  const editor = EditorView.findFromDOM(content)!;
+  editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: '# Real Markdown\n\n**Keep this**' } });
+  await waitFor(async () => { expect((await loadNotes()).find(n => n.title === 'Persistence test')?.body).toContain('**Keep this**'); });
+  await fireEvent.click(screen.getByRole('button', { name: 'Formatted' }));
+  expect(await screen.findByRole('heading', { name: 'Real Markdown' })).toBeTruthy();
+  expect(result.container.querySelector('.rich-document strong')?.textContent).toBe('Keep this');
+  await fireEvent.click(screen.getByRole('button', { name: 'Move to trash' }));
+  await fireEvent.click(screen.getByRole('button', { name: /Trash/ }));
+  expect(screen.getByRole('textbox', { name: 'Note title' })).toHaveProperty('value', 'Persistence test');
+  await fireEvent.click(screen.getAllByRole('button', { name: 'Restore note' })[0]);
+  await fireEvent.click(screen.getByRole('button', { name: /All notes/ }));
+  await fireEvent.input(screen.getByRole('textbox', { name: 'Search notes' }), { target: { value: 'Persistence test' } });
+  expect(screen.getByRole('button', { name: /Inbox Persistence test/ })).toBeTruthy();
+  await waitFor(async () => { expect((await loadNotes()).find(n => n.title === 'Persistence test')?.trashed).toBe(false); });
+  result.unmount();
+  render(App);
+  await waitFor(() => { expect(screen.getByRole('button', { name: /Inbox Persistence test/ })).toBeTruthy(); });
+});
+it('changes editor documents when selecting notes', async () => {
+  const result = render(App);
+  await screen.findByDisplayValue('A place for your thoughts');
+  await fireEvent.click(screen.getByRole('button', { name: /Small ideas, loosely collected/ }));
+  await waitFor(() => { expect(result.container.querySelector('.rich-document')?.textContent).toContain('The good ones rarely arrive fully formed.'); });
+  expect(result.container.querySelector('.rich-document')?.textContent).not.toContain('Welcome to Phosphor.');
+});
+it('sanitizes Markdown and renders tables and task lists', () => {
+  const html = renderMarkdown('<script>alert(1)</script>\n\n<img src="https://tracker.test/pixel" onerror="alert(1)">\n\n[bad](javascript:alert(1))\n\n- [x] Done\n\n| A | B |\n| - | - |\n| 1 | 2 |');
+  expect(html).not.toContain('<script');
+  expect(html).not.toContain('<img');
+  expect(html).not.toContain('javascript:');
+  expect(html).toContain('<table>');
+  expect(html).toContain('type="checkbox"');
+});

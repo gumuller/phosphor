@@ -1,0 +1,24 @@
+{
+  "identifier": "default",
+  "description": "Local notebook window",
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "core:default",
+    "core:window:allow-destroy",
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [
+        {
+          "url": "https://*"
+        },
+        {
+          "url": "http://*"
+        }
+      ]
+    },
+    "dialog:allow-save",
+    "fs:allow-write-text-file"
+  ]
+}

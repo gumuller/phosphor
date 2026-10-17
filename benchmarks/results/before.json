@@ -1,0 +1,18 @@
+{
+  "environment": "Linux, Node.js + jsdom; no native layout, paint or GPU timings",
+  "notes": 10000,
+  "corpus_characters": 18696000,
+  "search_cold_ms": 21.77,
+  "search": {
+    "samples": 30,
+    "p50_ms": 13.05,
+    "p95_ms": 14.18
+  },
+  "long_note_characters": 95888,
+  "long_note_load_ms": 92.09,
+  "editor_insert_and_markdown_serialization": {
+    "samples": 30,
+    "p50_ms": 5.63,
+    "p95_ms": 10.01
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "environment": "Linux, Node.js + jsdom; no native layout, paint or GPU timings",
+  "notes": 10000,
+  "corpus_characters": 18696000,
+  "search_cold_ms": 22.54,
+  "search": {
+    "samples": 30,
+    "p50_ms": 8.37,
+    "p95_ms": 8.76
+  },
+  "uncached_search_reference": {
+    "samples": 30,
+    "p50_ms": 14.02,
+    "p95_ms": 15.29
+  },
+  "rendered_note_cards": 10,
+  "note_list_jsdom_mount_ms": 31.29,
+  "long_note_characters": 95888,
+  "long_note_load_ms": 77.63,
+  "editor_insert_and_markdown_serialization": {
+    "samples": 30,
+    "p50_ms": 4.85,
+    "p95_ms": 9.1
+  }
+}

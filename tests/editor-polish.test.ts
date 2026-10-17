@@ -1,0 +1,73 @@
+import { it, expect, afterEach } from 'vitest';
+import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/svelte';
+import type { Editor } from '@tiptap/core';
+import { createRichEditor } from '../src/rich-editor';
+import { findText, searchInNote, findKey } from '../src/editor-find';
+import RichEditor from '../src/RichEditor.svelte';
+afterEach(cleanup);
+function make(body:string) { return createRichEditor({element:document.createElement('div')},body); }
+it('finds text across formatting marks, treats punctuation literally, and never changes saved content', () => {
+  const editor=make('A **bold** phrase and a.b; A BOLD phrase.\n\nİstanbul a.b');
+  const original=editor.getMarkdown();
+  expect(findText(editor.state.doc,'bold phrase')).toHaveLength(2);
+  expect(findText(editor.state.doc,'a.b')).toHaveLength(2);
+  const result=searchInNote(editor,'a.b',-1);
+  expect(result).toEqual({total:2,active:1});
+  expect(editor.state.doc.textBetween(editor.state.selection.from,editor.state.selection.to)).toBe('a.b');
+  expect(editor.getMarkdown()).toBe(original);
+  searchInNote(editor,'',0,false);
+  expect(findKey.getState(editor.state)?.matches).toEqual([]);
+  editor.destroy();
+});
+it('pastes a URL over selected text as a link and pastes formatted HTML through the schema', () => {
+  const editor=make('Useful reference');
+  editor.commands.setTextSelection({from:1,to:7});
+  const event=new Event('paste',{bubbles:true,cancelable:true});
+  Object.defineProperty(event,'clipboardData',{value:{getData:(type:string) => type==='text/plain'?'https://example.com':'',types:['text/plain'],files:[]}});
+  editor.view.dom.dispatchEvent(event);
+  expect(editor.getHTML()).toContain('href="https://example.com"');
+  expect(editor.getText()).toBe('Useful reference');
+  editor.commands.setTextSelection(editor.state.doc.content.size-1);
+  editor.view.pasteHTML('<p><strong>bold paste</strong><em>italic paste</em><script>bad()</script></p>');
+  expect(editor.getHTML()).toContain('<strong>bold paste</strong>');
+  expect(editor.getHTML()).not.toContain('<script');
+  editor.view.dom.dispatchEvent(new KeyboardEvent('keydown', { key: 'v', code: 'KeyV', keyCode: 86, ctrlKey: true, shiftKey: true, bubbles: true }));
+  editor.view.pasteText('\nplain **asterisks**');
+  expect(editor.getText()).toContain('plain **asterisks**');
+  editor.destroy();
+});
+it('supports Tab, Shift+Tab and automatic new rows in tables', () => {
+  const editor=make('');
+  editor.commands.insertTable({rows:1,cols:2,withHeaderRow:true});
+  const start=editor.state.selection.from;
+  const press=(shiftKey=false) => editor.view.someProp('handleKeyDown', handler => handler(editor.view,new KeyboardEvent('keydown',{key:'Tab',shiftKey})));
+  press();
+  expect(editor.state.selection.from).toBeGreaterThan(start);
+  press(true);
+  expect(editor.state.selection.from).toBe(start);
+  press();press();
+  expect(editor.getHTML().match(/<tr>/g)).toHaveLength(2);
+  editor.destroy();
+});
+it('finds within a note with next/previous controls and Ctrl+F', async () => {
+  const result=render(RichEditor,{value:'One green idea. Another green idea.',noteId:'find',onchange:()=>{},openUrl:()=>{}});
+  await fireEvent.keyDown(window,{key:'f',ctrlKey:true});
+  const field=await screen.findByRole('textbox',{name:'Find in current note'});
+  await fireEvent.input(field,{target:{value:'green'}});
+  expect(result.container.querySelectorAll('.note-match')).toHaveLength(2);
+  expect(screen.getByRole('status').textContent).toContain('1 / 2');
+  await fireEvent.click(screen.getByRole('button',{name:'Next match'}));
+  expect(screen.getByRole('status').textContent).toContain('2 / 2');
+  await fireEvent.keyDown(field,{key:'Escape'});
+  expect(screen.queryByRole('textbox',{name:'Find in current note'})).toBeNull();
+  expect(result.container.querySelector('.note-match')).toBeNull();
+});
+it('shows a floating toolbar for text selection and applies formatting', async () => {
+  const result=render(RichEditor,{value:'Select these words',noteId:'bubble',onchange:()=>{},openUrl:()=>{}});
+  const editor=(result.container.querySelector('.tiptap') as HTMLElement & {editor:Editor}).editor;
+  editor.commands.focus();
+  editor.commands.setTextSelection({from:1,to:7});
+  await waitFor(() => expect(screen.getByRole('toolbar',{name:'Selection formatting'})).toBeTruthy());
+  await fireEvent.click(screen.getByRole('button',{name:'Bold selection'}));
+  expect(editor.getHTML()).toContain('<strong>Select</strong>');
+});
