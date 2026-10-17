@@ -4,9 +4,22 @@
   import RichEditor from './RichEditor.svelte';
   import NoteList from './NoteList.svelte';
   import CrtRaster from './CrtRaster.svelte';
-  import { filterNotes, notebooks, SaveQueue, type Note } from './model';
-  import { loadNotes, saveNote, native, saveBrowserSnapshot } from './storage';
+  import WorkspaceTools from './WorkspaceTools.svelte';
+  import { markdownArchive, sortNotes, normalizeTags, type Workspace, type SearchHit } from './workspace';
+  import { filterNotes, SaveQueue, type Note } from './model';
+  import { loadWorkspace, saveNote, native, saveBrowserSnapshot, createNotebook, changeNotebook, changeTag, createBackup, restoreBackup, restoreBackupFile, autoBackup, searchNotes } from './storage';
   let notes: Note[] = $state([]);
+  let allNotebooks: string[] = $state([]);
+  let tools = $state('');
+  let busy = $state(false);
+  let filterNotebook = $state('');
+  let filterTag = $state('');
+  let sort = $state('updated');
+  let searchHits: SearchHit[] = $state([]);
+  let searching = $state(false);
+  let searchError = $state('');
+  let backupError = $state('');
+  let searchGeneration = 0;
   let selected = $state('welcome');
   let section = $state('All notes');
   let query = $state('');
@@ -21,25 +34,49 @@
   let mobileEditor = $state(false);
   let searchInput: HTMLInputElement;
   const queue = new SaveQueue(saveNote, (state, problem) => { saveState = state; if (problem) error = `Could not save: ${String(problem)}. Your edit is still here. Retry before closing.`; else if (state === 'saved') error = ''; });
-  const visible = $derived(filterNotes(notes, section, query));
+  const scoped = $derived(filterNotes(notes, section, '').filter(n => (!filterNotebook || n.notebook === filterNotebook) && (!filterTag || n.tags.split(',').some(t => t.trim().toLowerCase() === filterTag.toLowerCase()))));
+  const visible = $derived.by(() => {
+    if (!query.trim()) return sortNotes(scoped, sort);
+    const byId = new Map(scoped.map(n => [n.id, n]));
+    const matches = searchHits.flatMap(h => { const n = byId.get(h.id); return n ? [n] : []; });
+    return sort === 'relevance' ? matches : sortNotes(matches, sort);
+  });
+  const snippets = $derived(Object.fromEntries(searchHits.map(h => [h.id, h.snippet])));
+  $effect(() => {
+    const generation = ++searchGeneration;
+    const text = query; const view = section; const notebook = filterNotebook; const tag = filterTag; const order = sort;
+    notes; // Edits and organization changes invalidate indexed results after the save queue drains.
+    searchError = ''; searchHits = [];
+    if (!ready || !text.trim()) { searching = false; if (order === 'relevance') sort = 'updated'; return; }
+    searching = true;
+    const timer = setTimeout(async () => {
+      try {
+        await queue.flush();
+        const hits = await searchNotes({ query: text, notebook: notebook || (allNotebooks.includes(view) ? view : null), tag: tag || (view.startsWith('#') ? view.slice(1) : null), trashed: view === 'Trash', starred: view === 'Favorites', sort: order });
+        if (generation === searchGeneration) searchHits = hits;
+      } catch (e) { if (generation === searchGeneration) searchError = `Search failed: ${String(e)}`; }
+      finally { if (generation === searchGeneration) searching = false; }
+    }, 100);
+    return () => clearTimeout(timer);
+  });
   const current = $derived(notes.find(n => n.id === selected));
-  const tags = $derived([...new Set(notes.filter(n => !n.trashed).flatMap(n => n.tags.split(',').map(t => t.trim()).filter(Boolean)))].sort());
-  const allNotebooks = $derived([...new Set([...notebooks, ...notes.map(n => n.notebook)])]);
+  const tags = $derived([...new Set(notes.flatMap(n => n.tags.split(',').map(t => t.trim()).filter(Boolean)))].sort());
+
   const words = $derived(current?.body.trim().split(/\s+/).filter(Boolean).length ?? 0);
   const activeCount = $derived(notes.filter(n => !n.trashed).length);
   function update(patch: Partial<Note>) {
-    if (!current || !ready) return;
+    if (!current || !ready || busy) return;
     const next = { ...current, ...patch, updatedAt: Date.now() };
     notes = notes.map(n => n.id === next.id ? next : n);
     queue.enqueue(next);
   }
   function choose(id: string) { selected = id; mobileEditor = true; }
-  function navigate(name: string) { section = name; mobileEditor = false; const next = filterNotes(notes, name, query); if (!next.some(n => n.id === selected)) selected = next[0]?.id ?? ''; }
+  function navigate(name: string) { section = name; filterNotebook = ''; filterTag = ''; mobileEditor = false; const next = filterNotes(notes, name, query); if (!next.some(n => n.id === selected)) selected = next[0]?.id ?? ''; }
   function createNote() {
-    if (!ready) return;
+    if (!ready || busy) return;
     const now = Date.now();
     const note: Note = { id: crypto.randomUUID(), title: '', body: '', notebook: allNotebooks.includes(section) ? section : 'Inbox', tags: '', starred: false, trashed: false, createdAt: now, updatedAt: now };
-    notes = [note, ...notes]; section = 'All notes'; query = ''; selected = note.id; mode = 'formatted'; mobileEditor = true; queue.enqueue(note);
+    notes = [note, ...notes]; section = 'All notes'; query = ''; selected = note.id; mode = 'formatted'; filterNotebook = ''; filterTag = ''; mobileEditor = true; queue.enqueue(note);
     setTimeout(() => document.querySelector<HTMLInputElement>('.note-title')?.focus(), 0);
   }
   function trash() { if (!current) return; const id = current.id; update({ trashed: !current.trashed }); selected = filterNotes(notes, section, query).find(n => n.id !== id)?.id ?? ''; mobileEditor = false; }
@@ -68,7 +105,7 @@
   function date(time: number) { return new Date(time).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }); }
   function excerpt(body: string) { return body.replace(/[#>*`\[\]_-]/g, '').replace(/\s+/g, ' ').trim().slice(0, 110) || 'A little room for a new thought…'; }
   function keyboard(event: KeyboardEvent) {
-    if (!(event.ctrlKey || event.metaKey)) return;
+    if (tools || !(event.ctrlKey || event.metaKey)) return;
     if (event.key === '/') { event.preventDefault(); settings = !settings; }
     if (event.key.toLowerCase() === 'n') { event.preventDefault(); createNote(); }
     if (event.key.toLowerCase() === 'k') { event.preventDefault(); focus = false; mobileEditor = false; setTimeout(() => searchInput?.focus(), 0); }
@@ -78,7 +115,8 @@
   onMount(() => {
     let unlisten: (() => void) | undefined;
     let disposed = false;
-    void loadNotes().then(loaded => { if (disposed) return; notes = loaded; selected = loaded.find(n => !n.trashed)?.id ?? ''; ready = true; }).catch(e => { error = `Could not load notes: ${String(e)}`; });
+    void loadWorkspace().then(loaded => { if (disposed) return; applyWorkspace(loaded); selected = loaded.notes.find(n => !n.trashed)?.id ?? ''; ready = true; void automaticSnapshot(); }).catch(e => { error = `Could not load notes: ${String(e)}`; });
+    const backupTimer = setInterval(() => { if (ready && !busy) void automaticSnapshot(); }, 60_000);
     try {
       effects = localStorage.getItem('phosphor.crt') !== 'off';
       const storedBloom = localStorage.getItem('phosphor.bloom');
@@ -89,8 +127,40 @@
       const stop = await win.onCloseRequested(async event => { event.preventDefault(); try { await queue.flush(); await win.destroy(); } catch { /* Keep unsaved work open. */ } });
       if (disposed) stop(); else unlisten = stop;
     }).catch(e => { error = `Could not enable safe closing: ${String(e)}`; });
-    return () => { disposed = true; unlisten?.(); };
+    return () => { disposed = true; clearInterval(backupTimer); unlisten?.(); };
   });
+  function applyWorkspace(workspace: Workspace) {
+    notes = workspace.notes; allNotebooks = workspace.notebooks;
+    if (!['All notes', 'Favorites', 'Trash'].includes(section) && !section.startsWith('#') && !allNotebooks.includes(section)) section = 'All notes';
+    if (filterNotebook && !allNotebooks.includes(filterNotebook)) filterNotebook = '';
+    if (filterTag && !notes.some(n => n.tags.split(',').some(t => t.trim() === filterTag))) filterTag = '';
+    if (!notes.some(n => n.id === selected)) selected = notes.find(n => !n.trashed)?.id ?? '';
+  }
+  async function workspaceAction(action: () => Promise<Workspace>) {
+    busy = true;
+    try { await queue.flush(); applyWorkspace(await action()); }
+    finally { busy = false; }
+  }
+  async function snapshotNow() { await queue.flush(); await createBackup(); backupError = ''; }
+  async function automaticSnapshot() {
+    try { await queue.flush(); await autoBackup(); backupError = ''; }
+    catch (e) { backupError = `Automatic backup failed: ${String(e)}. Open Backups to retry or export.`; }
+  }
+  async function exportAll() {
+    await queue.flush();
+    const bytes = markdownArchive(await loadWorkspace());
+    const filename = `Phosphor-${new Date().toISOString().slice(0, 10)}.zip`;
+    if (native) {
+      const { save } = await import('@tauri-apps/plugin-dialog');
+      const path = await save({ defaultPath: filename, filters: [{ name: 'Markdown archive', extensions: ['zip'] }] });
+      if (!path) return false;
+      if (path) { const { writeFile } = await import('@tauri-apps/plugin-fs'); await writeFile(path, bytes); }
+    } else {
+      const url = URL.createObjectURL(new Blob([new Uint8Array(bytes).buffer], { type: 'application/zip' }));
+      const a = document.createElement('a'); a.href = url; a.download = filename; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+    return true;
+  }
   function leaving() { if (ready && !native) { try { saveBrowserSnapshot(notes); } catch { /* The save banner already reports failures. */ } } }
   function changeBloom(value: number) {
     bloom = value;
@@ -101,13 +171,15 @@
 
 <svelte:window onkeydown={keyboard} onbeforeunload={leaving} onblur={() => { if (ready) void queue.flush().catch(() => {}); }} />
 <div class:crt={effects} class:focused={focus} class:mobile-editor={mobileEditor} class="app-shell" style={`--bloom: ${bloom / 100}`}>
-  <header class="topbar">
-    <div class="brand"><span class="brand-icon"><Monitor size={22} strokeWidth={1.5}/></span><span>phosphor<span class="brand-dot">_</span></span><span class="version">LOCAL / 001</span></div>
+  <header class="topbar" inert={!!tools}>
+    <div class="brand"><span class="brand-icon"><Monitor size={22} strokeWidth={1.5}/></span><span>phosphor<span class="brand-dot">_</span></span><span class="version">LOCAL / 002</span></div>
     <div class="top-message"><span class="status-dot"></span> A LITTLE SPACE TO THINK.</div>
+    <button class="icon-button" aria-label="Workspace tools" title="Notebooks, tags & backups" onclick={() => tools = 'Notebooks'}><BookOpen size={17}/></button>
     <button class="icon-button" class:active={settings} title="Display settings" aria-label="Display settings" onclick={() => settings = !settings}><SlidersHorizontal size={17}/></button>
   </header>
   {#if error}<div class="error-banner" role="alert">{error} {#if ready}<button onclick={() => void queue.flush().catch(() => {})}>Retry save</button>{:else}<button onclick={() => location.reload()}>Retry load</button>{/if}</div>{/if}
-  <main>
+  {#if backupError}<div class="error-banner" role="alert">{backupError} <button onclick={() => tools = 'Backups'}>Open Backups</button></div>{/if}
+  <main inert={!!tools}>
     <aside class="sidebar">
       <button class="new-note" onclick={createNote} disabled={!ready}><Plus size={18}/><span>New note</span><kbd>⌃ N</kbd></button>
       <div class="nav-label">YOUR WORKSPACE</div>
@@ -116,17 +188,19 @@
           <button class:chosen={section === item.name} onclick={() => navigate(item.name)}><item.icon size={16}/><span>{item.name}</span><span class="count">{String(item.count).padStart(2, '0')}</span></button>
         {/each}
       </nav>
-      <div class="nav-label spaced">NOTEBOOKS <BookOpen size={12}/></div>
+      <div class="nav-label spaced">NOTEBOOKS <button aria-label="Manage notebooks" onclick={() => tools = 'Notebooks'}><Plus size={13}/></button></div>
       <nav aria-label="Notebooks">{#each allNotebooks as name}<button class:chosen={section === name} onclick={() => navigate(name)}>{#if name === 'Inbox'}<Inbox size={16}/>{:else}<BookOpen size={16}/>{/if}<span>{name}</span><span class="count">{notes.filter(n => n.notebook === name && !n.trashed).length}</span></button>{/each}</nav>
-      <div class="nav-label spaced">TAGS <Hash size={12}/></div>
+      <div class="nav-label spaced">TAGS <button aria-label="Manage tags" onclick={() => tools = 'Tags'}><Hash size={13}/></button></div>
       <div class="tags">{#each tags as tag}<button class:chosen={section === '#' + tag} onclick={() => navigate('#' + tag)}><span>#</span>{tag}</button>{/each}</div>
-      <div class="sidebar-bottom"><button class="trash-nav" class:chosen={section === 'Trash'} onclick={() => navigate('Trash')}><Trash2 size={16}/><span>Trash</span><span class="count">{notes.filter(n => n.trashed).length || ''}</span></button><div class="local-label"><span class="status-dot"></span><span>{native ? 'Stored on this device' : 'Browser preview · local storage'}</span></div><div class="sidebar-foot">YOUR THOUGHTS. YOUR SPACE.</div></div>
+      <div class="sidebar-bottom"><button class="trash-nav" onclick={() => tools = 'Backups'}><Download size={16}/><span>Backups & export</span></button><button class="trash-nav" class:chosen={section === 'Trash'} onclick={() => navigate('Trash')}><Trash2 size={16}/><span>Trash</span><span class="count">{notes.filter(n => n.trashed).length || ''}</span></button><div class="local-label"><span class="status-dot"></span><span>{native ? 'Stored on this device' : 'Browser preview · local storage'}</span></div><div class="sidebar-foot">YOUR THOUGHTS. YOUR SPACE.</div></div>
     </aside>
     <section class="note-list" aria-label="Notes">
       <div class="list-heading"><h1>{section}</h1><div class="mobile-list-tools"><select aria-label="View notes" value={section} onchange={e => navigate(e.currentTarget.value)}>{#each ['All notes', 'Favorites', ...allNotebooks, 'Trash'] as name}<option>{name}</option>{/each}</select><button class="icon-button" aria-label="Create note" onclick={createNote} disabled={!ready}><Plus size={18}/></button></div><span>{String(visible.length).padStart(2, '0')}</span></div>
-      <div class="search-box"><Search size={15}/><input bind:this={searchInput} bind:value={query} placeholder="Find a thought…" aria-label="Search notes"/><kbd>⌃ K</kbd>{#if query}<button class="icon-button" onclick={() => query = ''} aria-label="Clear search"><X size={12}/></button>{/if}</div>
-      <div class="sort-label"><span>{query ? 'SEARCH RESULTS' : 'LAST UPDATED'}</span><ChevronDown size={12}/></div>
-      {#if visible.length}<NoteList notes={visible} {selected} onchoose={choose}/>{:else}<div class="note-cards">        {#if !visible.length}<div class="list-empty"><Search size={24}/><p>{ready ? 'Nothing here. Yet.' : 'Opening your notebook…'}</p><span>{query ? 'Try a different word.' : 'A new thought starts with a new note.'}</span>{#if !query && ready}<button class="quiet-button" onclick={createNote}>+ Create a note</button>{/if}</div>{/if}</div>{/if}
+      <div class="search-box"><Search size={15}/><input bind:this={searchInput} bind:value={query} oninput={() => { if (!query.trim()) sort = 'relevance'; }} placeholder="Find a thought…" aria-label="Search notes"/><kbd>⌃ K</kbd>{#if query}<button class="icon-button" onclick={() => query = ''} aria-label="Clear search"><X size={12}/></button>{/if}</div>
+      <div class="search-filters"><select aria-label="Filter by notebook" bind:value={filterNotebook}><option value="">All notebooks</option>{#each allNotebooks as name}<option>{name}</option>{/each}</select><select aria-label="Filter by tag" bind:value={filterTag}><option value="">All tags</option>{#each tags as tag}<option>{tag}</option>{/each}</select></div>
+      <div class="sort-label"><span role="status">{searching ? 'SEARCHING…' : query ? 'SEARCH RESULTS' : 'SORT BY'}</span><select aria-label="Sort notes" bind:value={sort}>{#if query}<option value="relevance">Relevance</option>{/if}<option value="updated">Last updated</option><option value="created">Newest created</option><option value="title">Title A–Z</option></select></div>
+      {#if searchError}<p class="tools-error" role="alert">{searchError}</p>{/if}
+      {#if visible.length}<NoteList notes={visible} {selected} {query} {snippets} onchoose={choose}/>{:else}<div class="note-cards">        {#if !visible.length}<div class="list-empty"><Search size={24}/><p>{searching ? 'Searching…' : ready ? 'Nothing here. Yet.' : 'Opening your notebook…'}</p><span>{query ? 'Try a different word.' : 'A new thought starts with a new note.'}</span>{#if !query && ready}<button class="quiet-button" onclick={createNote}>+ Create a note</button>{/if}</div>{/if}</div>{/if}
       <div class="list-footer"><span>{activeCount} notes, a world of possibilities.</span><Circle size={8}/></div>
     </section>
     <section class="workspace" aria-label="Note editor">
@@ -135,7 +209,7 @@
         <div class="note-sheet">
           <div class="note-eyebrow"><span><FileText size={12}/> MARKDOWN NOTE</span><div class="note-actions"><button class="icon-button" class:starred={current.starred} onclick={() => update({ starred: !current.starred })} aria-label={current.starred ? 'Remove from favorites' : 'Add to favorites'} title="Favorite"><Star size={16} fill={current.starred ? 'currentColor' : 'none'}/></button><button class="icon-button" onclick={exportNote} aria-label="Export Markdown" title="Export Markdown"><Download size={16}/></button><button class="icon-button" onclick={trash} aria-label={current.trashed ? 'Restore note' : 'Move to trash'} title={current.trashed ? 'Restore note' : 'Move to trash'}>{#if current.trashed}<RotateCcw size={16}/>{:else}<Trash2 size={16}/>{/if}</button></div></div>
           <input class="note-title" aria-label="Note title" placeholder="Untitled note" value={current.title} oninput={e => update({ title: e.currentTarget.value })} readonly={current.trashed}/>
-          <div class="note-properties"><label><BookOpen size={12}/><select aria-label="Notebook" value={current.notebook} onchange={e => update({ notebook: e.currentTarget.value })} disabled={current.trashed}>{#each allNotebooks as name}<option>{name}</option>{/each}</select></label><span class="property-divider"></span><label class="tag-input"><Hash size={12}/><input aria-label="Tags, separated by commas" placeholder="Add tags, separated by commas" value={current.tags} oninput={e => update({ tags: e.currentTarget.value })} readonly={current.trashed}/></label></div>
+          <div class="note-properties"><label><BookOpen size={12}/><select aria-label="Notebook" value={current.notebook} onchange={e => update({ notebook: e.currentTarget.value })} disabled={current.trashed}>{#each allNotebooks as name}<option>{name}</option>{/each}</select></label><span class="property-divider"></span><label class="tag-input"><Hash size={12}/><input aria-label="Tags, separated by commas" placeholder="Add tags, separated by commas" value={current.tags} oninput={e => update({ tags: e.currentTarget.value })} onblur={() => { if (current && normalizeTags(current.tags) !== current.tags) update({ tags: normalizeTags(current.tags) }); }} readonly={current.trashed}/></label></div>
           <div class="sheet-rule"></div>
           {#if current.trashed}<div class="trash-banner">This note is in Trash. <button onclick={trash}>Restore note <RotateCcw size={12}/></button></div>{/if}
           {#if mode === 'formatted'}<RichEditor value={current.body} noteId={current.id} onchange={body => update({ body })} readonly={current.trashed} {openUrl}/>{:else}{#await import('./Editor.svelte')}<p class="preview-loading">Opening Markdown…</p>{:then raw}<raw.default value={current.body} noteId={current.id} onchange={body => update({ body })} readonly={current.trashed}/>{/await}{/if}
@@ -145,6 +219,11 @@
       <footer class="editor-footer"><span class:error={saveState === 'error'}>{#if saveState === 'saved'}<Check size={13}/>{:else}<span class="status-dot"></span>{/if}{saveState === 'saved' ? 'All changes saved' : saveState === 'saving' ? 'Saving…' : 'Unsaved changes'}</span><div><span>{words} words</span><span>UTF-8</span><span>MARKDOWN</span><span class="footer-cursor">▁</span></div></footer>
     </section>
   </main>
+  {#if tools}<WorkspaceTools notebooks={allNotebooks} {tags} tab={tools} onclose={() => tools = ''}
+    oncreate={name => workspaceAction(() => createNotebook(name))}
+    onnotebook={(old, name) => workspaceAction(async () => { const w = await changeNotebook(old, name); if (section === old) section = name ?? 'Inbox'; if (filterNotebook === old) filterNotebook = name ?? ''; return w; })}
+    ontag={(old, name) => workspaceAction(async () => { const w = await changeTag(old, name); if (section === '#' + old) section = name ? '#' + name : 'All notes'; if (filterTag === old) filterTag = name ?? ''; return w; })}
+    onbackup={snapshotNow} onrestorefile={backup => workspaceAction(async () => { const w = await restoreBackupFile(backup); query = ''; section = 'All notes'; filterNotebook = ''; filterTag = ''; return w; })} onrestore={id => workspaceAction(async () => { const w = await restoreBackup(id); query = ''; section = 'All notes'; filterNotebook = ''; filterTag = ''; return w; })} onexport={exportAll}/>{/if}
   {#if effects}<CrtRaster/>{/if}
   {#if settings}<div class="settings-popover"><div class="settings-title">DISPLAY <button class="icon-button" aria-label="Close display settings" onclick={() => settings = false}><X size={14}/></button></div><button class="setting-row" onclick={toggleEffects} aria-pressed={effects}><span>CRT atmosphere<small>Phosphor bloom, scanlines & glass glow</small></span><span class="toggle" class:on={effects}></span></button><label class="bloom-control" class:disabled={!effects}><span>Phosphor bloom <output for="bloom">{bloom}%</output></span><input id="bloom" aria-label="Phosphor bloom" aria-valuetext={`${bloom}%`} type="range" min="0" max="100" step="5" value={bloom} oninput={e => changeBloom(Number(e.currentTarget.value))} disabled={!effects}/><span class="bloom-scale"><span>Sharp</span><span>Radiant</span></span></label><p>Steady phosphor. No flicker or screen shake.</p><div class="shortcut-list"><span>New note <kbd>Ctrl N</kbd></span><span>Search <kbd>Ctrl K</kbd></span><span>Formatted / Raw <kbd>Ctrl Shift P</kbd></span><span>Save now <kbd>Ctrl S</kbd></span><span>Find in note <kbd>Ctrl F</kbd></span><span>Link selection <kbd>Ctrl Shift K</kbd></span><span>Paste plain text <kbd>Ctrl Shift V</kbd></span><span>Next / previous cell <kbd>Tab / Shift Tab</kbd></span><span>List indent / outdent <kbd>Ctrl ] / [</kbd></span><span>Shortcut help <kbd>Ctrl /</kbd></span></div></div>{/if}
 </div>

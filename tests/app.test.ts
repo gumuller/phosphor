@@ -25,7 +25,7 @@ it('creates, edits, saves, searches, and restores a local note', async () => {
   await fireEvent.click(screen.getAllByRole('button', { name: 'Restore note' })[0]);
   await fireEvent.click(screen.getByRole('button', { name: /All notes/ }));
   await fireEvent.input(screen.getByRole('textbox', { name: 'Search notes' }), { target: { value: 'Persistence test' } });
-  expect(screen.getByRole('button', { name: /Inbox Persistence test/ })).toBeTruthy();
+  expect(await screen.findByRole('button', { name: /Inbox Persistence test/ })).toBeTruthy();
   await waitFor(async () => { expect((await loadNotes()).find(n => n.title === 'Persistence test')?.trashed).toBe(false); });
   result.unmount();
   render(App);

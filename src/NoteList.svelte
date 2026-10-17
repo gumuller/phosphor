@@ -1,8 +1,9 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
+  import Highlight from './Highlight.svelte';
   import { Star } from '@lucide/svelte';
   import { noteWindow, type Note } from './model';
-  let { notes, selected, onchoose }: { notes: Note[]; selected: string; onchoose: (id: string) => void } = $props();
+  let { notes, selected, onchoose, query = '', snippets = {} }: { notes: Note[]; selected: string; onchoose: (id: string) => void; query?: string; snippets?: Record<string, string> } = $props();
   let viewport: HTMLDivElement;
   let top = $state(0);
   let height = $state(700);
@@ -43,7 +44,7 @@
     <div role="listitem" aria-setsize={notes.length} aria-posinset={range.start + index + 1}>
       <button class="note-card" class:selected={selected === note.id} data-note-id={note.id} onclick={() => onchoose(note.id)} aria-pressed={selected === note.id} onkeydown={keyboard} tabindex={selected === note.id || (!selectedVisible && index === 0) ? 0 : -1}>
         <div class="card-top"><span>{note.notebook}</span>{#if note.starred}<Star size={12} fill="currentColor"/>{/if}</div>
-        <h2>{note.title || 'Untitled note'}</h2><p>{excerpt(note.body)}</p><div class="card-meta"><span>{date(note.updatedAt)}</span><span>{note.tags.split(',').filter(t => t.trim()).map(t => '#' + t.trim()).slice(0, 2).join(' ')}</span></div>
+        <h2><Highlight text={note.title || 'Untitled note'} {query}/></h2><p><Highlight text={snippets[note.id] || excerpt(note.body)} {query}/></p><div class="card-meta"><span>{date(note.updatedAt)}</span><span>{note.tags.split(',').filter(t => t.trim()).map(t => '#' + t.trim()).slice(0, 2).join(' ')}</span></div>
       </button>
     </div>
   {/each}

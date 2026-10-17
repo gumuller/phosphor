@@ -19,9 +19,11 @@ Fast local capture, comfortable writing and reliable retrieval come first. Evern
 
 ## Next: everyday organization and trust
 
-- Notebook creation/renaming, notebook stacks and tag management.
-- Duplicate notes, quick-access shortcuts and an explicit sort menu.
-- Automatic local backups, retention and a tested restore flow.
+- [x] Notebook creation/renaming/deletion, persistent empty notebooks and tag rename/merge/removal.
+- [ ] Notebook stacks.
+- [ ] Duplicate notes and quick-access shortcuts.
+- [x] Automatic local snapshots, retention, tested restore/recovery, full Markdown export and portable backup restoration.
+- [x] SQLite FTS5 prefix search, relevance ranking, snippets, notebook/tag filters and explicit sorting.
 - Markdown import and a deliberate Evernote ENEX migration path.
 
 ## Later: richer reference material

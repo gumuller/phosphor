@@ -24,7 +24,7 @@ Final downloads appear in `target/release/distribution/`. The underlying bundles
 
 ## Publishing
 
-The workflow is `.github/workflows/release-linux.yml`. It pins action revisions, uses lockfiles, checks version consistency, runs frontend and SQLite tests, packages both formats, validates checksums/desktop metadata, and smoke-tests AppImage extraction/native startup under Xvfb with disposable notes and software graphics.
+The workflow is `.github/workflows/release-linux.yml`. It pins action revisions, uses lockfiles, checks version consistency, runs frontend and SQLite tests, packages both formats, validates checksums/desktop metadata, runs native WebDriver E2E against the optimized app with a disposable v0.1 database, and smoke-tests AppImage extraction/native startup under Xvfb with disposable notes and software graphics.
 
 That smoke check verifies a running application, SQLite initialization and a WebKit content process. It does not automate interactions or verify final visual layout.
 

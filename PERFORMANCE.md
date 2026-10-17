@@ -62,3 +62,11 @@ The checked-in `benchmarks/results/after.json` records an isolated synthetic wor
 Each timing distribution contains 30 samples. Search caching does more work up front and retains normalized note text; it trades some memory for repeated-search speed. The uncached reference uses the previous full-text concatenation/lowercasing behavior on the same corpus. Measurements are indicative, ordered within one process, and subject to runtime caches/GC. `before.json` is an earlier run with a different test runner concurrency context; prefer the same-run reference over treating the two files as a controlled end-to-end comparison.
 
 The list test confirms rendering remains bounded and keyboard navigation reaches note 10,000. It does not establish a native frame-rate guarantee. Native startup and input-to-paint remain to be measured with an appropriate UI surface.
+
+## v0.2 native SQLite search
+
+The default desktop search now uses a persistent FTS5 index, maintained by SQLite triggers in the same transactions as note edits, organization changes and restore. The old cached JavaScript search figures above describe the earlier implementation, not the new native path. All notes still load into frontend memory; indexing does not yet make startup/library memory independent of library size.
+
+Reproduce the isolated workload with `cargo run --release -p phosphor-store --example search_bench`. On this machine (2026-10-17), 10,000 synthetic notes with approximately 19 million body characters took 865.47 ms to insert. Thirty warm searches for one unique prefix, returning the result and highlighted snippet, measured 0.038 ms p50 / 0.070 ms p95. The first full snapshot took 70.60 ms; a not-due automatic-backup check took 0.0002 ms. These are Rust/SQLite logic measurements on a synthetic corpus, excluding IPC, UI debounce (100 ms), painting and disk-failure conditions. Common terms returning thousands of results require more work than this selective query.
+
+Database operations run on Tauri's blocking worker pool rather than its UI thread. The backup timer uses a cheap in-memory cadence check, reads only the most recent valid automatic snapshot when due, and skips unchanged workspaces. Native WebDriver E2E exercises the optimized executable and real SQLite, but is a correctness check, not an input-to-paint performance benchmark.
