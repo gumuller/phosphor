@@ -46,7 +46,16 @@ class NativeWorkflow(unittest.TestCase):
         return self.request(method, '/session/' + self.session + path, body)
 
     def js(self, script, *args):
-        return self.session_request('POST', '/execute/sync', {'script': script, 'args': list(args)})
+        # WebKitWebDriver can retire a pooled HTTP connection between commands.
+        # Only retry read-only evaluation here; mutation helpers handle their own waits.
+        attempts = 3 if script.lstrip().startswith('return ') else 1
+        for attempt in range(attempts):
+            try:
+                return self.session_request('POST', '/execute/sync', {'script': script, 'args': list(args)})
+            except (OSError, urllib.error.URLError):
+                if attempt + 1 == attempts:
+                    raise
+                time.sleep(.08)
 
     def wait(self, predicate, description, timeout=15):
         deadline = time.monotonic() + timeout
@@ -93,7 +102,8 @@ class NativeWorkflow(unittest.TestCase):
 
     def select(self, label, value):
         # Native WebDriver doesn't implement Select helpers; use the same DOM events as selection.
-        self.js('const e=document.querySelector(arguments[0]); e.value=arguments[1]; e.dispatchEvent(new Event("change",{bubbles:true}));', f'select[aria-label="{label}"]', value)
+        # Selection is idempotent, so a transient transport disconnect can retry safely.
+        self.wait(lambda: self.js('const e=document.querySelector(arguments[0]); if (!e || e.disabled) return false; e.value=arguments[1]; e.dispatchEvent(new Event("change",{bubbles:true})); return true;', f'select[aria-label="{label}"]', value), f'select {label}')
 
     def text(self, css):
         return self.js('return document.querySelector(arguments[0])?.textContent || ""', css)
@@ -130,7 +140,7 @@ class NativeWorkflow(unittest.TestCase):
                 db.execute('INSERT INTO notes VALUES(?,?)', (note['id'], json.dumps(note)))
         port, native_port = free_port(), free_port()
         self.url = f'http://127.0.0.1:{port}'
-        environment = {**os.environ, 'XDG_DATA_HOME': str(self.data), 'XDG_CONFIG_HOME': str(Path(self.directory.name)/'config'), 'XDG_CACHE_HOME': str(Path(self.directory.name)/'cache'), 'TAURI_WEBVIEW_AUTOMATION': 'true', 'GDK_BACKEND': 'x11', 'LIBGL_ALWAYS_SOFTWARE': '1', 'WEBKIT_DISABLE_DMABUF_RENDERER': '1'}
+        environment = {**os.environ, 'XDG_DATA_HOME': str(self.data), 'XDG_CONFIG_HOME': str(Path(self.directory.name)/'config'), 'XDG_CACHE_HOME': str(Path(self.directory.name)/'cache'), 'TAURI_WEBVIEW_AUTOMATION': 'true', 'GDK_BACKEND': 'x11', 'GDK_SCALE': '1', 'GDK_DPI_SCALE': '1', 'LIBGL_ALWAYS_SOFTWARE': '1', 'WEBKIT_DISABLE_DMABUF_RENDERER': '1'}
         ARTIFACTS.mkdir(parents=True, exist_ok=True)
         self.log = (ARTIFACTS / 'driver.log').open('w')
         command = [shutil.which('tauri-driver') or str(Path.home()/'.cargo/bin/tauri-driver'), '--port', str(port), '--native-port', str(native_port)]
@@ -185,6 +195,7 @@ class NativeWorkflow(unittest.TestCase):
         self.fill('Search notes', 'nebulag')
         self.wait(lambda: 'E2E launch' in self.text('.note-cards'), 'body prefix indexed')
         self.assertIn('Nebulag', self.text('.note-card mark'))
+        self.assertEqual(self.value('Sort notes'), 'relevance')
         self.select('Filter by notebook', 'Personal')
         self.wait(lambda: 'E2E launch' not in self.text('.note-cards'), 'notebook filter')
         self.select('Filter by notebook', 'Research')

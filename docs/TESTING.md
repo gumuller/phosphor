@@ -11,14 +11,14 @@ npm run test:e2e
 
 ## Unit and component tests
 
-30 Vitest/jsdom tests cover both editors, formatting, save-queue ordering/failures, filtering, management UI, restoration confirmation, snapshot write failures, export ZIP contents/path safety/metadata, and literal highlighting. 12 Rust tests cover v0.1 migration, persisted empty notebooks, notebook/tag operations, FTS migration/update/filter/ranking/snippets, reopening, backup retention, invalid input, transactional restoration and recovery-copy failures.
+31 Vitest/jsdom tests cover both editors, formatting, save-queue ordering/failures, filtering, management UI, restoration confirmation, snapshot write failures, export ZIP contents/path safety/metadata, and literal highlighting. 12 Rust tests cover v0.1 migration, persisted empty notebooks, notebook/tag operations, FTS migration/update/filter/ranking/snippets, reopening, backup retention, invalid input, transactional restoration and recovery-copy failures.
 
 ## Native end-to-end test
 
 `e2e/native.py` is a Python standard-library W3C WebDriver client, following [Tauri's native WebDriver setup](https://v2.tauri.app/develop/tests/webdriver/). Install `tauri-driver` with `cargo install tauri-driver --version 2.0.4 --locked` and provide `WebKitWebDriver` on PATH (Ubuntu package `webkit2gtk-driver`). A graphical session is needed; on CI use:
 
 ```bash
-dbus-run-session -- xvfb-run -a npm run test:e2e
+dbus-run-session -- xvfb-run -a -s '-screen 0 1920x1080x24' npm run test:e2e
 ```
 
 The test launches the actual optimized executable, enables Tauri automation only in its process environment, and uses real commands/SQLite, not API mocks or browser localStorage. It starts with a disposable v0.1 schema and exercises notebook creation/duplicates, formatted typing, content-prefix search/highlighting, combined filters, rename/delete/moves, tag merge/removal, manual snapshots, safe restore/recovery, Trash search/restore, empty notebook persistence a full process restart, and portable backup-file recovery. It verifies stored data independently through SQLite.

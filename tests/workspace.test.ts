@@ -97,3 +97,11 @@ it('reads the migrated workspace independently of an obsolete legacy key', async
   localStorage.setItem('phosphor.notes.v1', 'obsolete invalid JSON');
   expect(await loadWorkspace()).toEqual(expected);
 });
+
+it('defaults new searches to relevance and returns to recent sorting when cleared', async () => {
+  render(App); await screen.findByDisplayValue('A place for your thoughts');
+  await fireEvent.input(screen.getByRole('textbox', { name: 'Search notes' }), { target: { value: 'welcome' } });
+  expect(screen.getByRole('combobox', { name: 'Sort notes' })).toHaveProperty('value', 'relevance');
+  await fireEvent.click(screen.getByRole('button', { name: 'Clear search' }));
+  await waitFor(() => expect(screen.getByRole('combobox', { name: 'Sort notes' })).toHaveProperty('value', 'updated'));
+});

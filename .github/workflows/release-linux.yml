@@ -61,6 +61,7 @@ jobs:
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           workspaces: '. -> target'
+          cache-on-failure: true
 
       - name: Install frontend dependencies
         run: npm ci
@@ -82,7 +83,7 @@ jobs:
         run: cargo install tauri-driver --version 2.0.4 --locked
 
       - name: Test native app end to end with real SQLite
-        run: dbus-run-session -- xvfb-run -a npm run test:e2e
+        run: dbus-run-session -- xvfb-run -a -s '-screen 0 1920x1080x24' npm run test:e2e
 
       - name: Retain native test evidence
         if: always()
