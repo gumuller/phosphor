@@ -1,0 +1,111 @@
+name: Linux release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Version tag matching the checked-out source, e.g. v0.1.0
+        required: true
+        type: string
+      publish:
+        description: Publish tested downloads as a GitHub preview release
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: linux-release-${{ inputs.tag || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    permissions:
+      contents: write
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+      APPIMAGE_EXTRACT_AND_RUN: '1'
+    steps:
+      - name: Check out the release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.ref }}
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          cache: npm
+
+      - name: Verify version matches the tag
+        run: node scripts/prepare-release.mjs --tag "$RELEASE_TAG" --check-version
+
+      - name: Install Linux build and headless smoke-test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            build-essential libwebkit2gtk-4.1-dev libayatana-appindicator3-dev \
+            librsvg2-dev patchelf libfuse2 file squashfs-tools \
+            desktop-file-utils xvfb xauth dbus-x11 xdg-utils
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+
+      - name: Cache Rust workspace builds
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          workspaces: '. -> target'
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Check frontend and editor behavior
+        run: |
+          npm run check
+          npm test
+
+      - name: Check SQLite persistence
+        run: cargo test --locked -p phosphor-store
+
+      - name: Build AppImage and Debian package
+        run: npm run package:linux -- -- --locked
+
+      - name: Stage release downloads and checksums
+        run: node scripts/prepare-release.mjs --tag "$RELEASE_TAG"
+
+      - name: Verify package metadata
+        run: |
+          dpkg-deb --info target/release/distribution/*.deb
+          cd target/release/distribution
+          sha256sum --check SHA256SUMS
+
+      - name: Smoke-test packaged startup without FUSE or a real desktop
+        run: |
+          dbus-run-session -- xvfb-run -a python3 scripts/smoke-test-appimage.py \
+            "target/release/distribution/Phosphor-${RELEASE_TAG#v}-linux-x86_64.AppImage"
+
+      - name: Retain tested distribution files
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: phosphor-${{ env.RELEASE_TAG }}-linux-x86_64
+          path: target/release/distribution/*
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Publish Linux preview release
+        if: github.event_name == 'push' || inputs.publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          sed "s/__VERSION__/${RELEASE_TAG#v}/g" docs/RELEASE_NOTES.md > target/release/RELEASE_NOTES.md
+          gh release create "$RELEASE_TAG" target/release/distribution/* \
+            --target "$GITHUB_SHA" --prerelease \
+            --title "Phosphor ${RELEASE_TAG#v} — Linux preview" \
+            --notes-file target/release/RELEASE_NOTES.md

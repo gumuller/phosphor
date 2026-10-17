@@ -2,6 +2,27 @@
 
 A local-first notebook with a quiet green CRT interface. This first iteration is for validating the feel of writing and finding notes.
 
+## Download the Linux app
+
+Get the **AppImage** from [GitHub Releases](https://github.com/gumuller/phosphor/releases). The repository is private, so sign in with an account that has repository access. You can share the downloaded AppImage directly.
+
+1. Download `Phosphor-0.1.0-linux-x86_64.AppImage`.
+2. Right-click it, open **Properties**, and allow executing it as a program.
+3. Double-click it.
+
+Or use a terminal in your Downloads folder:
+
+```bash
+chmod u+x Phosphor-0.1.0-linux-x86_64.AppImage
+./Phosphor-0.1.0-linux-x86_64.AppImage
+```
+
+No Rust, Node.js, development server or account is needed to run the app. If your system lacks FUSE 2, launch with `APPIMAGE_EXTRACT_AND_RUN=1 ./Phosphor-0.1.0-linux-x86_64.AppImage`. An optional `.deb` provides an installed menu launcher on Debian/Ubuntu. See the release's `INSTALL.txt` and `SHA256SUMS`.
+
+Linux x86_64 packages use Ubuntu 22.04 as the build baseline (glibc 2.35+); other architectures/platforms are not packaged yet. Notes stay in your application-data directory, separate from the executable. Updating means replacing the app file, not your note data.
+
+See [Linux packaging and releases](docs/DISTRIBUTION.md) for build and publishing instructions.
+
 ## Run
 
 ```bash

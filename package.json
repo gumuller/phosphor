@@ -10,7 +10,8 @@
     "tauri": "tauri",
     "desktop": "tauri dev",
     "test": "vitest run",
-    "bench": "vitest run --config vitest.bench.config.ts"
+    "bench": "vitest run --config vitest.bench.config.ts",
+    "package:linux": "tauri build --bundles appimage,deb"
   },
   "dependencies": {
     "@codemirror/commands": "^6",
